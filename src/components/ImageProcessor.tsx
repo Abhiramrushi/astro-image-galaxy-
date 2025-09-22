@@ -8,12 +8,72 @@ import { Zap, Download, Eye, Loader2 } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import { pipeline } from '@huggingface/transformers';
 
+// Image preprocessing utilities
+const preprocessImage = (canvas: HTMLCanvasElement, ctx: CanvasRenderingContext2D) => {
+  const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const data = imageData.data;
+  
+  // Enhance contrast and reduce noise
+  for (let i = 0; i < data.length; i += 4) {
+    // Contrast enhancement
+    const r = ((data[i] / 255 - 0.5) * 1.5 + 0.5) * 255;
+    const g = ((data[i + 1] / 255 - 0.5) * 1.5 + 0.5) * 255;
+    const b = ((data[i + 2] / 255 - 0.5) * 1.5 + 0.5) * 255;
+    
+    data[i] = Math.max(0, Math.min(255, r));
+    data[i + 1] = Math.max(0, Math.min(255, g));
+    data[i + 2] = Math.max(0, Math.min(255, b));
+  }
+  
+  ctx.putImageData(imageData, 0, 0);
+  return canvas.toDataURL('image/jpeg', 0.9);
+};
+
+const createEnsembleClassification = (results: any[]) => {
+  const labelCounts = new Map();
+  const confidenceSum = new Map();
+  
+  results.forEach(result => {
+    if (result && Array.isArray(result) && result.length > 0) {
+      const topResult = result[0] as { label: string; score: number };
+      const label = topResult.label;
+      
+      labelCounts.set(label, (labelCounts.get(label) || 0) + 1);
+      confidenceSum.set(label, (confidenceSum.get(label) || 0) + topResult.score);
+    }
+  });
+  
+  // Find most frequent label with highest average confidence
+  let bestLabel = '';
+  let bestScore = 0;
+  let bestCount = 0;
+  
+  labelCounts.forEach((count, label) => {
+    const avgScore = confidenceSum.get(label) / count;
+    if (count > bestCount || (count === bestCount && avgScore > bestScore)) {
+      bestLabel = label;
+      bestScore = avgScore;
+      bestCount = count;
+    }
+  });
+  
+  // Boost confidence if multiple models agree
+  const confidenceBoost = bestCount > 1 ? Math.min(0.2, (bestCount - 1) * 0.1) : 0;
+  return {
+    label: bestLabel,
+    confidence: Math.min(1.0, bestScore + confidenceBoost),
+    agreementCount: bestCount
+  };
+};
+
 interface ProcessedImage {
   file: File;
   preview: string;
   classification?: {
     label: string;
     confidence: number;
+    agreementCount?: number;
+    rawResults?: any[];
   };
   processed?: boolean;
   processing?: boolean;
@@ -39,16 +99,39 @@ export const ImageProcessor: React.FC<ImageProcessorProps> = ({
     
     try {
       toast({
-        title: "Initializing AI models",
-        description: "Loading computer vision models...",
+        title: "Initializing AI ensemble",
+        description: "Loading multiple specialized models for higher accuracy...",
       });
 
-      // Initialize the image classification pipeline
-      const classifier = await pipeline(
-        'image-classification',
-        'Xenova/vit-base-patch16-224',
-        { device: 'webgpu' }
-      );
+      // Initialize multiple models for ensemble classification
+      const models = [
+        { name: 'ViT Base', id: 'Xenova/vit-base-patch16-224' },
+        { name: 'ResNet', id: 'Xenova/resnet-50' },
+        { name: 'EfficientNet', id: 'Xenova/efficientnet-b0' }
+      ];
+
+      const classifiers = [];
+      for (const model of models) {
+        try {
+          const classifier = await pipeline(
+            'image-classification',
+            model.id,
+            { device: 'webgpu' }
+          );
+          classifiers.push({ classifier, name: model.name });
+        } catch (error) {
+          console.warn(`Failed to load ${model.name}, continuing with others...`);
+        }
+      }
+
+      if (classifiers.length === 0) {
+        throw new Error('No models could be loaded');
+      }
+
+      toast({
+        title: `Loaded ${classifiers.length} models`,
+        description: "Processing with ensemble classification for higher confidence...",
+      });
 
       const processed: ProcessedImage[] = [];
       
@@ -57,6 +140,21 @@ export const ImageProcessor: React.FC<ImageProcessorProps> = ({
         
         // Create preview URL
         const preview = URL.createObjectURL(file);
+        
+        // Preprocess image for better results
+        const img = new Image();
+        await new Promise((resolve) => {
+          img.onload = resolve;
+          img.src = preview;
+        });
+        
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d')!;
+        canvas.width = 224;
+        canvas.height = 224;
+        ctx.drawImage(img, 0, 0, 224, 224);
+        
+        const enhancedImageUrl = preprocessImage(canvas, ctx);
         
         // Add to processed array with processing state
         const processedItem: ProcessedImage = {
@@ -70,15 +168,29 @@ export const ImageProcessor: React.FC<ImageProcessorProps> = ({
         setProgress(((i + 1) / images.length) * 100);
         
         try {
-          // Classify the image
-          const result = await classifier(preview);
+          // Run classification with all available models
+          const results = [];
+          for (const { classifier, name } of classifiers) {
+            try {
+              const result = await classifier(enhancedImageUrl);
+              results.push(result);
+            } catch (error) {
+              console.warn(`${name} classification failed:`, error);
+            }
+          }
           
-          if (result && Array.isArray(result) && result.length > 0) {
-            const topResult = result[0] as { label: string; score: number };
-            processedItem.classification = {
-              label: topResult.label,
-              confidence: topResult.score,
-            };
+          if (results.length > 0) {
+            const ensembleResult = createEnsembleClassification(results);
+            
+            // Only show results with decent confidence
+            if (ensembleResult.confidence > 0.1) {
+              processedItem.classification = {
+                label: ensembleResult.label,
+                confidence: ensembleResult.confidence,
+                agreementCount: ensembleResult.agreementCount,
+                rawResults: results
+              };
+            }
           }
           
           processedItem.processed = true;
@@ -93,9 +205,10 @@ export const ImageProcessor: React.FC<ImageProcessorProps> = ({
       
       setProcessedImages(processed);
       
+      const successCount = processed.filter(p => p.classification).length;
       toast({
-        title: "Processing complete",
-        description: `Successfully processed ${processed.length} images`,
+        title: "Ensemble processing complete",
+        description: `Successfully classified ${successCount}/${processed.length} images with enhanced confidence`,
       });
       
     } catch (error) {
@@ -223,7 +336,7 @@ export const ImageProcessor: React.FC<ImageProcessorProps> = ({
                     </p>
                   </div>
                   
-                  <div className="flex-shrink-0 text-right space-y-1">
+                  <div className="space-y-1">
                     {item.processing ? (
                       <Badge variant="secondary">
                         <Loader2 className="mr-1 h-3 w-3 animate-spin" />
@@ -231,9 +344,19 @@ export const ImageProcessor: React.FC<ImageProcessorProps> = ({
                       </Badge>
                     ) : item.classification ? (
                       <div className="space-y-1">
-                        <Badge className="bg-gradient-cosmic text-primary-foreground">
-                          {item.classification.label}
-                        </Badge>
+                        <div className="flex items-center gap-2">
+                          <Badge className={`${
+                            item.classification.confidence > 0.7 ? 'bg-gradient-cosmic' :
+                            item.classification.confidence > 0.4 ? 'bg-secondary' : 'bg-muted'
+                          } text-primary-foreground`}>
+                            {item.classification.label}
+                          </Badge>
+                          {item.classification.agreementCount && item.classification.agreementCount > 1 && (
+                            <Badge variant="outline" className="text-xs">
+                              {item.classification.agreementCount} models agree
+                            </Badge>
+                          )}
+                        </div>
                         <p className="text-xs text-muted-foreground">
                           {(item.classification.confidence * 100).toFixed(1)}% confidence
                         </p>
