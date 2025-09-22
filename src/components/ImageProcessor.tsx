@@ -46,7 +46,7 @@ export const ImageProcessor: React.FC<ImageProcessorProps> = ({
       // Initialize the image classification pipeline
       const classifier = await pipeline(
         'image-classification',
-        'microsoft/resnet-50',
+        'Xenova/vit-base-patch16-224',
         { device: 'webgpu' }
       );
 
