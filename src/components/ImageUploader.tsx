@@ -3,15 +3,16 @@ import { useDropzone } from "react-dropzone";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Upload, Image as ImageIcon, X } from "lucide-react";
+import { Upload, Image as ImageIcon, X, Sparkles } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 
 interface ImageUploaderProps {
   images: File[];
   setImages: (images: File[]) => void;
+  onEnhanceImage?: (image: File) => void;
 }
 
-export const ImageUploader: React.FC<ImageUploaderProps> = ({ images, setImages }) => {
+export const ImageUploader: React.FC<ImageUploaderProps> = ({ images, setImages, onEnhanceImage }) => {
   const [previews, setPreviews] = useState<string[]>([]);
 
   const onDrop = useCallback((acceptedFiles: File[]) => {
@@ -136,9 +137,22 @@ export const ImageUploader: React.FC<ImageUploaderProps> = ({ images, setImages 
                     <p className="text-xs text-muted-foreground truncate">
                       {images[index]?.name}
                     </p>
-                    <Badge variant="secondary" className="text-xs">
-                      {(images[index]?.size / 1024 / 1024).toFixed(2)} MB
-                    </Badge>
+                    <div className="flex items-center gap-2">
+                      <Badge variant="secondary" className="text-xs">
+                        {(images[index]?.size / 1024 / 1024).toFixed(2)} MB
+                      </Badge>
+                      {onEnhanceImage && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="text-xs px-2 py-1 h-auto"
+                          onClick={() => onEnhanceImage(images[index])}
+                        >
+                          <Sparkles className="h-3 w-3 mr-1" />
+                          Enhance
+                        </Button>
+                      )}
+                    </div>
                   </div>
                 </CardContent>
               </Card>

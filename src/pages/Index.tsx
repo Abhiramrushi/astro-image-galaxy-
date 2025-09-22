@@ -3,6 +3,8 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { ImageUploader } from "@/components/ImageUploader";
 import { ImageProcessor } from "@/components/ImageProcessor";
+import { ImageEnhancer } from "@/components/ImageEnhancer";
+import { SpaceNews } from "@/components/SpaceNews";
 import { SampleGallery } from "@/components/SampleGallery";
 import { StarField } from "@/components/StarField";
 import { Upload, Zap, Star, Download } from "lucide-react";
@@ -11,6 +13,7 @@ import cosmicHero from "@/assets/cosmic-hero.jpg";
 const Index = () => {
   const [uploadedImages, setUploadedImages] = useState<File[]>([]);
   const [processedImages, setProcessedImages] = useState<any[]>([]);
+  const [enhancingImage, setEnhancingImage] = useState<File | null>(null);
 
   return (
     <div className="min-h-screen cosmic-bg">
@@ -123,6 +126,7 @@ const Index = () => {
             <ImageUploader 
               images={uploadedImages}
               setImages={setUploadedImages}
+              onEnhanceImage={setEnhancingImage}
             />
             
             {uploadedImages.length > 0 && (
@@ -142,6 +146,25 @@ const Index = () => {
       <section id="gallery-section">
         <SampleGallery />
       </section>
+
+      {/* Space News Section */}
+      <section className="py-20">
+        <div className="container mx-auto px-4">
+          <SpaceNews />
+        </div>
+      </section>
+
+      {/* Image Enhancer Modal */}
+      {enhancingImage && (
+        <div className="fixed inset-0 z-50 bg-background/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="max-w-6xl w-full max-h-[90vh] overflow-auto">
+            <ImageEnhancer 
+              imageFile={enhancingImage} 
+              onClose={() => setEnhancingImage(null)} 
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 };
